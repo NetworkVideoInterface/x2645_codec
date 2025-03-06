@@ -1,0 +1,12 @@
+
+find_package(x264 CONFIG QUIET)
+if (x264_FOUND)
+    message(STATUS "Found x264-${x264_VERSION} from ${x264_DIR}.")
+else()
+    find_path(X264_INCLUDE_DIR "x264.h" REQUIRED)
+    find_library(X264_LIBRARY_D "libx264" HINTS ${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/lib REQUIRED NO_DEFAULT_PATH NO_CMAKE_PATH)
+    find_library(X264_LIBRARY_R "libx264" HINTS ${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib REQUIRED NO_DEFAULT_PATH NO_CMAKE_PATH)
+    add_library(x264 INTERFACE)
+    target_include_directories(x264 INTERFACE ${X264_INCLUDE_DIR})
+    target_link_libraries(x264 INTERFACE debug ${X264_LIBRARY_D} optimized ${X264_LIBRARY_R})
+endif()

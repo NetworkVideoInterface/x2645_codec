@@ -1,0 +1,280 @@
+stages:
+  - check
+  - build
+  - deploy
+
+#每次PUSH分支触发文件编码格式检查
+check:file_code:
+  stage: check
+  tags:
+    - Python3
+  only:
+    - branches
+  except:
+    - tags
+    - schedules
+    - master
+    - main
+  script:
+    - python3 ./script/encode_conv.py ./src
+
+check:commit:
+  stage: check
+  tags:
+    - Python3
+  only:
+    - branches
+  except:
+    - tags
+    - schedules
+    - master
+    - main
+  script:
+    - git fetch origin HEAD
+    - python3 ./script/check_commit.py
+
+#每次PUSH分支触发代码格式检查
+check:clang-format:
+  stage: check
+  tags:
+    - Windows
+  only:
+    - branches
+  except:
+    - tags
+    - schedules
+    - master
+    - main
+  script:
+    - python3 ./script/format_code.py ./src
+    - git diff --exit-code ./src
+
+#每次PUSH分支触发编译检查
+build:windows:amd64:
+  stage: build
+  tags:
+    - Windows
+    - VS2019
+  only:
+    refs:
+      - branches
+  except:
+    - tags
+    - schedules
+    - master
+    - main
+  before_script:
+    - Import-Module "$env:VS_INSTALL_PATH\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
+  script:
+    - chcp 65001
+    - echo "Build project with ninja on windows."
+    - mkdir build 
+    - cd build
+    - Enter-VsDevShell -VsInstallPath "$env:VS_INSTALL_PATH" -DevCmdArguments "-arch=x64 -host_arch=x64" -SkipAutomaticLocation
+    - cmake ../ -G "Ninja"
+    - ninja
+
+build:linux:x86_64:
+  stage: build
+  tags:
+    - Linux
+    - x86_64
+  only:
+    refs:
+      - branches
+  except:
+    - tags
+    - schedules
+    - master
+    - main
+  script:
+    - echo "Build project on for x86_64."
+    - mkdir build 
+    - cd build
+    - cmake ../
+    - cmake --build . --parallel 16
+
+build:linux:aarch64:
+  stage: build
+  tags:
+    - Linux
+    - x86_64
+    - linaro
+  only:
+    refs:
+      - branches
+  except:
+    - tags
+    - schedules
+    - master
+    - main
+  script:
+    - echo "Build project for aarch64."
+    - mkdir build 
+    - cd build
+    - export AARCH64_PATH=/opt/gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu/bin/
+    - cmake ../ -DCMAKE_TOOLCHAIN_FILE=../script/cmake/aarch64_linux.cmake
+    - cmake --build . --parallel 16
+
+build:osx:
+  stage: build
+  tags:
+    - macOSX
+    - Xcode
+  only:
+    refs:
+      - branches
+  except:
+    - tags
+    - schedules
+    - master
+    - main
+  script:
+    - echo "Build project on macOSX."
+    - mkdir build 
+    - cd build
+    - cmake ../ -G Xcode
+    - cmake --build . --parallel 16
+
+#git tag触发打包部署
+deploy:windows:amd64:tag:
+  stage: deploy
+  tags:
+    - Releaser
+    - Windows
+    - VS2019
+  only:
+    refs:
+      - tags
+    variables:
+      - $CI_COMMIT_TAG =~ /^\d*\.\d*\.\d*$/
+  except:
+    - branches
+  variables:
+    APP_VERSION: $CI_COMMIT_TAG
+  script:
+    - mkdir build 
+    - cd build
+    - cmake ../ -A x64 -G "Visual Studio 16 2019" -DLIB_VERSION="$APP_VERSION" -DLIB_PUBLISHER="$APP_PUBLISHER" -DLIB_COPYRIGHT="$APP_COPYRIGHT"
+    - cmake --build . --target install --config RelWithDebInfo
+  artifacts:
+    name: "X2645Pulgin-$CI_COMMIT_TAG-windows-amd64-msvc"
+    when: on_success
+    paths:
+      - build/install/*
+    expire_in: 1 yrs
+
+deploy:linux:amd64:tag:
+  stage: deploy
+  tags:
+    - Releaser
+    - Linux
+    - x86_64
+  only:
+    refs:
+      - tags
+    variables:
+      - $CI_COMMIT_TAG =~ /^\d*\.\d*\.\d*$/
+  except:
+    - branches
+  variables:
+    APP_VERSION: $CI_COMMIT_TAG
+  script:
+    - mkdir build
+    - cd build
+    - cmake ../ -DCMAKE_BUILD_TYPE=RelWithDebInfo -DLIB_VERSION="$APP_VERSION" -DLIB_PUBLISHER="$APP_PUBLISHER" -DLIB_COPYRIGHT="$APP_COPYRIGHT"
+    - cmake --build . --target install --parallel 16
+  artifacts:
+    name: "X2645Plugin-$CI_COMMIT_TAG-linux-amd64-gcc"
+    public: true
+    when: on_success
+    paths:
+      - build/install/*
+    expire_in: 1 yrs
+
+deploy:linux:aarch64:tag:
+  stage: deploy
+  tags:
+    - Releaser
+    - Linux
+    - x86_64
+    - linaro
+  only:
+    refs:
+      - tags
+    variables:
+      - $CI_COMMIT_TAG =~ /^\d*\.\d*\.\d*$/
+  except:
+    - branches
+  variables:
+    APP_VERSION: $CI_COMMIT_TAG
+  script:
+    - mkdir build
+    - cd build
+    - export AARCH64_PATH=/opt/compiler/aarch64-linaro-gcc7.5-linux/bin/
+    - cmake ../ -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_TOOLCHAIN_FILE=../script/cmake/aarch64_linux.cmake
+      -DLIB_VERSION="$APP_VERSION" -DLIB_PUBLISHER="$APP_PUBLISHER" -DLIB_COPYRIGHT="$APP_COPYRIGHT"
+    - cmake --build . --target install --parallel 16
+  artifacts:
+    name: "X2645Plugin-$CI_COMMIT_TAG-linux-aarch64-linaro-gcc7.5"
+    public: true
+    when: on_success
+    paths:
+      - build/install/*
+    expire_in: 1 yrs
+
+deploy:osx:x86_64:tag:
+  stage: deploy
+  tags:
+    - Releaser
+    - OSX
+    - Xcode
+  only:
+    refs:
+      - tags
+    variables:
+      - $CI_COMMIT_TAG =~ /^\d*\.\d*\.\d*$/
+  except:
+    - branches
+  variables:
+    APP_VERSION: $CI_COMMIT_TAG
+  script:
+    - mkdir build
+    - cd build
+    - cmake ../ -G Xcode -DCMAKE_OSX_ARCHITECTURES="x86_64" -DLIB_VERSION="$APP_VERSION" -DLIB_PUBLISHER="$APP_PUBLISHER" -DLIB_COPYRIGHT="$APP_COPYRIGHT"
+    - cmake --build . --target install --parallel 16
+  artifacts:
+    name: "X2645Plugin-$CI_COMMIT_TAG-osx-x86_64"
+    public: true
+    when: on_success
+    paths:
+      - build/install/*
+    expire_in: 1 yrs
+
+deploy:osx:arm64:tag:
+  stage: deploy
+  tags:
+    - Releaser
+    - OSX
+    - Xcode
+  only:
+    refs:
+      - tags
+    variables:
+      - $CI_COMMIT_TAG =~ /^\d*\.\d*\.\d*$/
+  except:
+    - branches
+  variables:
+    APP_VERSION: $CI_COMMIT_TAG
+  script:
+    - mkdir build
+    - cd build
+    - cmake ../ -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64" -DLIB_VERSION="$APP_VERSION" -DLIB_PUBLISHER="$APP_PUBLISHER" -DLIB_COPYRIGHT="$APP_COPYRIGHT"
+    - cmake --build . --target install --parallel 16
+  artifacts:
+    name: "X2645Plugin-$CI_COMMIT_TAG-osx-arm64"
+    public: true
+    when: on_success
+    paths:
+      - build/install/*
+    expire_in: 1 yrs
